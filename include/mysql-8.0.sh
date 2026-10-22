@@ -17,11 +17,11 @@ Install_MySQL80() {
   mkdir -p ${mysql_data_dir};chown mysql:mysql -R ${mysql_data_dir}
 
   if [ "${dbinstallmethod}" == "1" ]; then
-    tar xJf mysql-${mysql80_ver}-linux-glibc2.12-x86_64.tar.xz
-    mv mysql-${mysql80_ver}-linux-glibc2.12-x86_64/* ${mysql_install_dir}
+    tar xJf mysql-${mysql80_ver}-linux-glibc${mysql_glibc}-x86_64.tar.xz
+    mv mysql-${mysql80_ver}-linux-glibc${mysql_glibc}-x86_64/* ${mysql_install_dir}
     sed -i "s@/usr/local/mysql@${mysql_install_dir}@g" ${mysql_install_dir}/bin/mysqld_safe
   elif [ "${dbinstallmethod}" == "2" ]; then
-    boostVersion2=$(echo ${boost_ver} | awk -F. '{print $1"_"$2"_"$3}')
+    boostVersion2=$(echo ${boost_mysql80_ver} | awk -F. '{print $1"_"$2"_"$3}')
     tar xzf boost_${boostVersion2}.tar.gz
     tar xzf mysql-${mysql80_ver}.tar.gz
     pushd mysql-${mysql80_ver}
@@ -202,7 +202,7 @@ EOF
   [ "${Wsl}" == true ] && chmod 600 /etc/my.cnf
   chown mysql:mysql -R ${mysql_data_dir}
   [ -d "/etc/mysql" ] && /bin/mv /etc/mysql{,_bk}
-  service mysqld start
+  command -v service >/dev/null 2>&1 && service mysqld start || /etc/init.d/mysqld start
   [ -z "$(grep ^'export PATH=' /etc/profile)" ] && echo "export PATH=${mysql_install_dir}/bin:\$PATH" >> /etc/profile
   [ -n "$(grep ^'export PATH=' /etc/profile)" -a -z "$(grep ${mysql_install_dir} /etc/profile)" ] && sed -i "s@^export PATH=\(.*\)@export PATH=${mysql_install_dir}/bin:\1@" /etc/profile
   . /etc/profile
@@ -216,5 +216,5 @@ EOF
   [ -e "${mysql_install_dir}/my.cnf" ] && rm -f ${mysql_install_dir}/my.cnf
   echo "${mysql_install_dir}/lib" > /etc/ld.so.conf.d/z-mysql.conf
   ldconfig
-  service mysqld stop
+  command -v service >/dev/null 2>&1 && service mysqld stop || /etc/init.d/mysqld stop
 }

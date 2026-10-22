@@ -23,7 +23,7 @@ Install_PHP80() {
     tar xzf curl-${curl_ver}.tar.gz
     pushd curl-${curl_ver} > /dev/null
     [ -e "/usr/local/lib/libnghttp2.so" ] && with_nghttp2='--with-nghttp2=/usr/local'
-    ./configure --prefix=${curl_install_dir} ${php80_with_ssl} ${with_nghttp2}
+    ./configure --prefix=${curl_install_dir} ${php80_with_ssl} ${with_nghttp2} --without-libpsl
     make -j ${THREAD} && make install
     popd > /dev/null
     rm -rf curl-${curl_ver}
@@ -59,11 +59,20 @@ Install_PHP80() {
     rm -rf libsodium-${libsodium_ver}
   fi
 
-  if [ ! -e "/usr/local/lib/libzip.la" ]; then
+  if [ ! -e "/usr/local/lib/libzip.la" -a ! -e "/usr/local/lib/libzip.so" ]; then
     tar xzf libzip-${libzip_ver}.tar.gz
     pushd libzip-${libzip_ver} > /dev/null
-    ./configure
-    make -j ${THREAD} && make install
+    if [ -e "./configure" ]; then
+      ./configure
+      make -j ${THREAD} && make install
+    else
+      mkdir -p build && pushd build > /dev/null
+      # libzip 1.10+ requires CMake 3.14+; CentOS 7 ships CMake 2.8 as cmake and 3.x as cmake3
+      [ -e "/usr/bin/cmake3" ] && CMAKE=cmake3 || CMAKE=cmake
+      ${CMAKE} -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_OSSFUZZ=OFF -DBUILD_REGRESS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_DOC=OFF ..
+      make -j ${THREAD} && make install
+      popd > /dev/null
+    fi
     popd > /dev/null
     rm -rf libzip-${libzip_ver}
   fi
@@ -71,7 +80,8 @@ Install_PHP80() {
   if [ ! -e "/usr/local/include/mhash.h" -a ! -e "/usr/include/mhash.h" ]; then
     tar xzf mhash-${mhash_ver}.tar.gz
     pushd mhash-${mhash_ver} > /dev/null
-    ./configure
+    /bin/cp /usr/share/misc/config.guess /usr/share/misc/config.sub . 2>/dev/null
+    CFLAGS="-O2 ${compat_cflags}" ./configure
     make -j ${THREAD} && make install
     popd > /dev/null
     rm -rf mhash-${mhash_ver}
@@ -96,8 +106,32 @@ Install_PHP80() {
     sed -i '/OPENSSL_SSLV23_PADDING/i#ifdef RSA_SSLV23_PADDING' ext/openssl/openssl.c
     sed -i '/OPENSSL_SSLV23_PADDING/a#endif' ext/openssl/openssl.c
   fi
+  [ -e ext/libxml/libxml.c ] && sed -i 's/ATTRIBUTE_UNUSED/__attribute__((unused))/g' ext/libxml/libxml.c
+  if [ -e ext/openssl/php_openssl.h ] && ! grep -q '^#ifndef ERR_NUM_ERRORS' ext/openssl/php_openssl.h; then
+    sed -i '/struct php_openssl_errors {/i #ifndef ERR_NUM_ERRORS\n#define ERR_NUM_ERRORS 16\n#endif' ext/openssl/php_openssl.h
+  fi
+  # ASN1_STRING_get0_data() only exists in OpenSSL 1.1.0+; map it for OpenSSL 1.0.x (e.g. CentOS 7 system OpenSSL 1.0.2).
+  # PHP 7.x openssl.c already ships its own static fallback, so only patch files that lack one.
+  for f in ext/openssl/xp_ssl.c ext/openssl/openssl.c; do
+    if [ -e "${f}" ] && ! grep -q 'ASN1_STRING_get0_data(const ASN1_STRING' ${f} && ! grep -q 'define ASN1_STRING_get0_data' ${f}; then
+      sed -i '1i #include <openssl/opensslv.h>\n#if OPENSSL_VERSION_NUMBER < 0x10100000L && !defined(LIBRESSL_VERSION_NUMBER)\n#define ASN1_STRING_get0_data ASN1_STRING_data\n#endif' ${f}
+    fi
+  done
+  if [ -e ext/openssl/xp_ssl.c ]; then
+    sed -i 's/san->d.iPAddress->length/ASN1_STRING_length(san->d.iPAddress)/g' ext/openssl/xp_ssl.c
+    sed -i 's/san->d.iPAddress->data/ASN1_STRING_get0_data(san->d.iPAddress)/g' ext/openssl/xp_ssl.c
+  fi
+  if [ -e ext/openssl/openssl.c ]; then
+    sed -i 's/(char \*)str->data, str->length/(char *)ASN1_STRING_get0_data(str), ASN1_STRING_length(str)/g' ext/openssl/openssl.c
+    sed -i 's/timestr->data/ASN1_STRING_get0_data(timestr)/g' ext/openssl/openssl.c
+    sed -i 's/extension_data->data/ASN1_STRING_get0_data(extension_data)/g' ext/openssl/openssl.c
+    sed -i 's/extension_data->length/ASN1_STRING_length(extension_data)/g' ext/openssl/openssl.c
+  fi
+  [ -e Zend/zend_portability.h ] && sed -i 's@typedef std::max_align_t zend_max_align_t;@typedef max_align_t zend_max_align_t;@' Zend/zend_portability.h
+  [ -e ext/pdo_sqlite/pdo_sqlite.c ] && sed -i 's@sqlite3_db_config(sqlite_handle, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, \([01]\), NULL)@sqlite3_enable_load_extension(sqlite_handle, \1)@g' ext/pdo_sqlite/pdo_sqlite.c
+  [ -f configure ] && sed -i 's@libxml-2.0 >= 2.9.4@libxml-2.0 >= 2.9.0@g; s@zlib >= 1.2.11@zlib >= 1.2.7@g' configure
   make clean
-  export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig/:$PKG_CONFIG_PATH
+  export PKG_CONFIG_PATH=${openssl_install_dir}/lib/pkgconfig:${curl_install_dir}/lib/pkgconfig:${freetype_install_dir}/lib/pkgconfig:/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
   [ ! -d "${php_install_dir}" ] && mkdir -p ${php_install_dir}
   [ "${phpcache_option}" == '1' ] && phpcache_arg='--enable-opcache' || phpcache_arg='--disable-opcache'
   if [ "${apache_mode_option}" == '2' ]; then
@@ -123,7 +157,7 @@ Install_PHP80() {
     --with-mhash --enable-pcntl --enable-sockets --enable-ftp --enable-intl --with-xsl \
     --with-gettext --with-zip=/usr/local --enable-soap --disable-debug ${php_modules_options}
   fi
-  make ZEND_EXTRA_LIBS='-liconv' -j ${THREAD}
+  make EXTRA_CFLAGS="${compat_cflags}" ZEND_EXTRA_LIBS='-liconv' -j ${THREAD}
   make install
 
   if [ -e "${php_install_dir}/bin/phpize" ]; then
@@ -269,10 +303,10 @@ EOF
       sed -i "s@^pm.max_spare_servers.*@pm.max_spare_servers = 80@" ${php_install_dir}/etc/php-fpm.conf
     fi
 
-    systemctl start php-fpm
+    systemctl start php-fpm 2>/dev/null || ${php_install_dir}/sbin/php-fpm
 
   elif [ "${apache_mode_option}" == '2' ]; then
-    systemctl restart httpd
+    systemctl restart httpd 2>/dev/null || ${apache_install_dir}/bin/apachectl -k restart
   fi
   popd > /dev/null
   [ -e "${php_install_dir}/bin/phpize" ] && rm -rf php-${php80_ver}

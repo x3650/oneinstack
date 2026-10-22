@@ -17,21 +17,21 @@ Install_OpenResty() {
 
   tar xzf pcre-${pcre_ver}.tar.gz
   tar xzf openresty-${openresty_ver}.tar.gz
-  tar xzf openssl-${openssl11_ver}.tar.gz
+  tar xzf openssl-${openssl_ver}.tar.gz
   pushd openresty-${openresty_ver} > /dev/null
 
   # close debug
   sed -i 's@CFLAGS="$CFLAGS -g"@#CFLAGS="$CFLAGS -g"@' bundle/nginx-${openresty_ver%.*}/auto/cc/gcc # close debug
 
   [ ! -d "${openresty_install_dir}" ] && mkdir -p ${openresty_install_dir}
-  ./configure --prefix=${openresty_install_dir} --user=${run_user} --group=${run_group} --with-http_stub_status_module --with-http_sub_module --with-http_v2_module --with-http_ssl_module --with-http_gzip_static_module --with-http_realip_module --with-http_flv_module --with-http_mp4_module --with-openssl=../openssl-${openssl11_ver} --with-pcre=../pcre-${pcre_ver} --with-pcre-jit --with-ld-opt='-ljemalloc -Wl,-u,pcre_version' ${nginx_modules_options}
+  ./configure --prefix=${openresty_install_dir} --user=${run_user} --group=${run_group} --with-http_stub_status_module --with-http_sub_module --with-http_v2_module --with-http_v3_module --with-http_ssl_module --with-http_gzip_static_module --with-http_realip_module --with-http_flv_module --with-http_mp4_module --with-openssl=../openssl-${openssl_ver} --with-pcre=../pcre-${pcre_ver} --with-pcre-jit --with-ld-opt='-ljemalloc -Wl,-u,pcre_version' ${nginx_modules_options}
   make -j ${THREAD} && make install
   if [ -e "${openresty_install_dir}/nginx/conf/nginx.conf" ]; then
     popd > /dev/null
-    rm -rf pcre-${pcre_ver}* openssl-${openssl11_ver}* openresty-${openresty_ver}*
+    rm -rf pcre-${pcre_ver}* openssl-${openssl_ver}* openssl-${openssl11_ver}* openresty-${openresty_ver}*
     echo "${CSUCCESS}OpenResty installed successfully! ${CEND}"
   else
-    rm -rf pcre-${pcre_ver}* openssl-${openssl11_ver}* openresty-${openresty_ver}* ${openresty_install_dir}*
+    rm -rf pcre-${pcre_ver}* openssl-${openssl_ver}* openssl-${openssl11_ver}* openresty-${openresty_ver}* ${openresty_install_dir}*
     echo "${CFAILURE}OpenResty install failed, Please Contact the author! ${CEND}"
     kill -9 $$; exit 1;
   fi
@@ -47,11 +47,11 @@ Install_OpenResty() {
   mv ${openresty_install_dir}/nginx/conf/nginx.conf{,_bk}
   if [ "${apache_flag}" == 'y' ] || [ -e "${apache_install_dir}/bin/httpd" ]; then
     /bin/cp ../config/nginx_apache.conf ${openresty_install_dir}/nginx/conf/nginx.conf 
-  elif { [[ ${tomcat_option} =~ ^[1-4]$ ]] || [ -e "${tomcat_install_dir}/conf/server.xml" ]; } && { [[ ! ${php_option} =~ ^[1-9]$|^1[0-1]$ ]] && [ ! -e "${php_install_dir}/bin/php" ]; }; then
+  elif { [[ ${tomcat_option} =~ ^[1-5]$ ]] || [ -e "${tomcat_install_dir}/conf/server.xml" ]; } && { [[ ! ${php_option} =~ ^[1-9]$|^1[0-5]$ ]] && [ ! -e "${php_install_dir}/bin/php" ]; }; then
     /bin/cp ../config/nginx_tomcat.conf ${openresty_install_dir}/nginx/conf/nginx.conf 
   else
     /bin/cp ../config/nginx.conf ${openresty_install_dir}/nginx/conf/nginx.conf
-    [[ "${php_option}" =~ ^[1-9]$|^1[0-1]$ ]] && [ -z "`grep '/php-fpm_status' ${openresty_install_dir}/nginx/conf/nginx.conf`" ] &&  sed -i "s@index index.html index.php;@index index.html index.php;\n    location ~ /php-fpm_status {\n        #fastcgi_pass remote_php_ip:9000;\n        fastcgi_pass unix:/dev/shm/php-cgi.sock;\n        fastcgi_index index.php;\n        include fastcgi.conf;\n        allow 127.0.0.1;\n        deny all;\n        }@" ${openresty_install_dir}/nginx/conf/nginx.conf
+    [[ "${php_option}" =~ ^[1-9]$|^1[0-5]$ ]] && [ -z "`grep '/php-fpm_status' ${openresty_install_dir}/nginx/conf/nginx.conf`" ] &&  sed -i "s@index index.html index.php;@index index.html index.php;\n    location ~ /php-fpm_status {\n        #fastcgi_pass remote_php_ip:9000;\n        fastcgi_pass unix:/dev/shm/php-cgi.sock;\n        fastcgi_index index.php;\n        include fastcgi.conf;\n        allow 127.0.0.1;\n        deny all;\n        }@" ${openresty_install_dir}/nginx/conf/nginx.conf
   fi
   cat > ${openresty_install_dir}/nginx/conf/proxy.conf << EOF
 proxy_connect_timeout 300s;

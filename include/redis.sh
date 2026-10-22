@@ -12,19 +12,21 @@ Install_redis_server() {
   pushd ${oneinstack_dir}/src > /dev/null
   tar xzf redis-${redis_ver}.tar.gz
   pushd redis-${redis_ver} > /dev/null
-  make -j ${THREAD}
+  make -C src OPTIMIZATION="-O3 -fno-omit-frame-pointer" -j ${THREAD}
   if [ -f "src/redis-server" ]; then
     mkdir -p ${redis_install_dir}/{bin,etc,var}
     /bin/cp src/{redis-benchmark,redis-check-aof,redis-check-rdb,redis-cli,redis-sentinel,redis-server} ${redis_install_dir}/bin/
     /bin/cp redis.conf ${redis_install_dir}/etc/
-    ln -s ${redis_install_dir}/bin/* /usr/local/bin/
+    ln -sf ${redis_install_dir}/bin/* /usr/local/bin/
     sed -i 's@pidfile.*@pidfile /var/run/redis/redis.pid@' ${redis_install_dir}/etc/redis.conf
     sed -i "s@logfile.*@logfile ${redis_install_dir}/var/redis.log@" ${redis_install_dir}/etc/redis.conf
     sed -i "s@^dir.*@dir ${redis_install_dir}/var@" ${redis_install_dir}/etc/redis.conf
     sed -i 's@daemonize no@daemonize yes@' ${redis_install_dir}/etc/redis.conf
-    sed -i "s@^# bind 127.0.0.1@bind 127.0.0.1@" ${redis_install_dir}/etc/redis.conf
-    redis_maxmemory=`expr $Mem / 8`000000
-    [ -z "`grep ^maxmemory ${redis_install_dir}/etc/redis.conf`" ] && sed -i "s@maxmemory <bytes>@maxmemory <bytes>\nmaxmemory `expr $Mem / 8`000000@" ${redis_install_dir}/etc/redis.conf
+    sed -i "s@^# bind 127.0.0.1.*@bind 127.0.0.1 -::1@" ${redis_install_dir}/etc/redis.conf
+    redis_maxmemory=`expr ${Mem:-1024} / 8`000000
+    [ -z "`grep ^maxmemory ${redis_install_dir}/etc/redis.conf`" ] && sed -i "s@maxmemory <bytes>@maxmemory <bytes>\nmaxmemory ${redis_maxmemory}@" ${redis_install_dir}/etc/redis.conf
+    # Disable any unbuilt loadmodule to prevent startup crash
+    sed -i 's@^loadmodule @#loadmodule @g' ${redis_install_dir}/etc/redis.conf
     echo "${CSUCCESS}Redis-server installed successfully! ${CEND}"
     popd > /dev/null
     rm -rf redis-${redis_ver}
@@ -34,10 +36,28 @@ Install_redis_server() {
 
     /bin/cp ../init.d/redis-server.service /lib/systemd/system/
     sed -i "s@/usr/local/redis@${redis_install_dir}@g" /lib/systemd/system/redis-server.service
-    systemctl enable redis-server
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable redis-server 2>/dev/null || true
     #[ -z "`grep 'vm.overcommit_memory' /etc/sysctl.conf`" ] && echo 'vm.overcommit_memory = 1' >> /etc/sysctl.conf
     #sysctl -p
-    systemctl start redis-server
+    if ! systemctl restart redis-server 2>/dev/null && ! systemctl start redis-server 2>/dev/null; then
+      mkdir -p /var/run/redis
+      chown -R redis:redis /var/run/redis
+      LC_ALL=C su -s /bin/sh redis -c "${redis_install_dir}/bin/redis-server ${redis_install_dir}/etc/redis.conf"
+    fi
+    local redis_started=0
+    for ((i=1; i<=5; i++)); do
+      if ${redis_install_dir}/bin/redis-cli ping 2>/dev/null | grep -q 'PONG'; then
+        redis_started=1
+        break
+      fi
+      sleep 1
+    done
+    if [ ${redis_started} -eq 0 ]; then
+      echo "${CFAILURE}Redis-server start failed! redis-cli ping did not return PONG. ${CEND}"
+      systemctl status redis-server --no-pager
+      kill -9 $$; exit 1;
+    fi
   else
     rm -rf ${redis_install_dir}
     echo "${CFAILURE}Redis-server install failed, Please contact the author! ${CEND}" && grep -Ew 'NAME|ID|ID_LIKE|VERSION_ID|PRETTY_NAME' /etc/os-release
@@ -60,8 +80,13 @@ Install_pecl_redis() {
       tar xzf redis-${pecl_redis_ver}.tgz
       pushd redis-${pecl_redis_ver} > /dev/null
     fi
+    [ -f common.h ] && sed -i '/#include "backoff.h"/i #ifndef REDIS_NODISCARD\n#define REDIS_NODISCARD\n#endif' common.h
+    redis_ext_opts=""
+    [ -f "${phpExtensionDir}/igbinary.so" ] && redis_ext_opts="${redis_ext_opts} --enable-redis-igbinary"
+    [ -f "${phpExtensionDir}/msgpack.so" ] && redis_ext_opts="${redis_ext_opts} --enable-redis-msgpack"
+    [ -f "${phpExtensionDir}/zstd.so" ] && redis_ext_opts="${redis_ext_opts} --enable-redis-zstd"
     ${php_install_dir}/bin/phpize
-    ./configure --with-php-config=${php_install_dir}/bin/php-config
+    CFLAGS="-std=gnu99 -g -O2" ./configure --with-php-config=${php_install_dir}/bin/php-config ${redis_ext_opts}
     make -j ${THREAD} && make install
     popd > /dev/null
     if [ -f "${phpExtensionDir}/redis.so" ]; then

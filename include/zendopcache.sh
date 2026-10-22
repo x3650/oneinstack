@@ -14,19 +14,41 @@ Install_ZendOPcache() {
     phpExtensionDir=$(${php_install_dir}/bin/php-config --extension-dir)
     PHP_detail_ver=$(${php_install_dir}/bin/php-config --version)
     PHP_main_ver=${PHP_detail_ver%.*}
-    if [[ "${PHP_main_ver}" =~ ^5.[3-4]$ ]]; then
-      tar xzf zendopcache-${zendopcache_ver}.tgz
-      pushd zendopcache-${zendopcache_ver} > /dev/null
-    else
-      src_url=https://secure.php.net/distributions/php-${PHP_detail_ver}.tar.gz && Download_src
-      tar xzf php-${PHP_detail_ver}.tar.gz
-      pushd php-${PHP_detail_ver}/ext/opcache > /dev/null
+    if [ "${PHP_main_ver}" == '8.5' ]; then
+      cat > ${php_install_dir}/etc/php.d/02-opcache.ini << EOF
+[opcache]
+opcache.enable=1
+opcache.enable_cli=1
+opcache.memory_consumption=${Memory_limit}
+opcache.interned_strings_buffer=8
+opcache.max_accelerated_files=100000
+opcache.max_wasted_percentage=5
+opcache.use_cwd=1
+opcache.validate_timestamps=1
+opcache.revalidate_freq=60
+;opcache.save_comments=0
+opcache.consistency_checks=0
+;opcache.optimization_level=0
+EOF
+      echo "${CSUCCESS}PHP opcache module (built-in) configured successfully! ${CEND}"
+      popd > /dev/null
+      return 0
     fi
+    if [ ! -f "${phpExtensionDir}/opcache.so" ]; then
+      if [[ "${PHP_main_ver}" =~ ^5.[3-4]$ ]]; then
+        tar xzf zendopcache-${zendopcache_ver}.tgz
+        pushd zendopcache-${zendopcache_ver} > /dev/null
+      else
+        src_url=${mirror_link}/oneinstack/src/php-${PHP_detail_ver}.tar.gz && Download_src
+        tar xzf php-${PHP_detail_ver}.tar.gz
+        pushd php-${PHP_detail_ver}/ext/opcache > /dev/null
+      fi
 
-    ${php_install_dir}/bin/phpize
-    ./configure --with-php-config=${php_install_dir}/bin/php-config
-    make -j ${THREAD} && make install
-    popd > /dev/null
+      ${php_install_dir}/bin/phpize
+      ./configure --with-php-config=${php_install_dir}/bin/php-config
+      make CFLAGS="-O2 ${compat_cflags}" -j ${THREAD} && make install
+      popd > /dev/null
+    fi
     if [ -f "${phpExtensionDir}/opcache.so" ]; then
       # write opcache configs
       if [[ "${PHP_main_ver}" =~ ^5.[3-4]$ ]]; then

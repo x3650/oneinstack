@@ -33,6 +33,7 @@ pushd ${oneinstack_dir} > /dev/null
 . ./include/upgrade_db.sh
 . ./include/upgrade_php.sh
 . ./include/upgrade_redis.sh
+. ./include/upgrade_valkey.sh
 . ./include/upgrade_memcached.sh
 . ./include/upgrade_phpmyadmin.sh
 . ./include/upgrade_oneinstack.sh
@@ -52,6 +53,7 @@ Show_Help() {
   --db           [version]    Upgrade MySQL/MariaDB/Percona
   --php          [version]    Upgrade PHP
   --redis        [version]    Upgrade Redis
+  --valkey       [version]    Upgrade Valkey
   --memcached    [version]    Upgrade Memcached
   --phpmyadmin   [version]    Upgrade phpMyAdmin
   --oneinstack                Upgrade OneinStack latest
@@ -60,7 +62,8 @@ Show_Help() {
 }
 
 ARG_NUM=$#
-TEMP=`getopt -o h --long help,nginx:,tengine:,openresty:,apache:,tomcat:,db:,php:,redis:,memcached:,phpmyadmin:,oneinstack,acme.sh -- "$@" 2>/dev/null`
+TEMP=`getopt -o h --long help,nginx:,tengine:,openresty:,apache:,tomcat:,db:,php:,redis:,valkey:,memcached:,phpmyadmin:,oneinstack,acme.sh -- "$@" 2>/dev/null`
+
 [ $? != 0 ] && echo "${CWARNING}ERROR: unknown argument! ${CEND}" && Show_Help && exit 1
 eval set -- "${TEMP}"
 while :; do
@@ -76,7 +79,7 @@ while :; do
       tengine_flag=y; NEW_tengine_ver=$2; shift 2
       ;;
     --openresty)
-      openresty_flag=y; NEW_openresy_ver=$2; shift 2
+      openresty_flag=y; NEW_openresty_ver=$2; shift 2
       ;;
     --apache)
       apache_flag=y; NEW_apache_ver=$2; shift 2
@@ -92,6 +95,9 @@ while :; do
       ;;
     --redis)
       redis_flag=y; NEW_redis_ver=$2; shift 2
+      ;;
+    --valkey)
+      valkey_flag=y; NEW_valkey_ver=$2; shift 2
       ;;
     --memcached)
       memcached_flag=y; NEW_memcached_ver=$2; shift 2
@@ -124,16 +130,17 @@ What Are You Doing?
 \t${CMSG} 4${CEND}. Upgrade MySQL/MariaDB/Percona
 \t${CMSG} 5${CEND}. Upgrade PHP
 \t${CMSG} 6${CEND}. Upgrade Redis
-\t${CMSG} 7${CEND}. Upgrade Memcached
-\t${CMSG} 8${CEND}. Upgrade phpMyAdmin
-\t${CMSG} 9${CEND}. Upgrade OneinStack latest
-\t${CMSG}10${CEND}. Upgrade acme.sh latest
+\t${CMSG} 7${CEND}. Upgrade Valkey
+\t${CMSG} 8${CEND}. Upgrade Memcached
+\t${CMSG} 9${CEND}. Upgrade phpMyAdmin
+\t${CMSG}10${CEND}. Upgrade OneinStack latest
+\t${CMSG}11${CEND}. Upgrade acme.sh latest
 \t${CMSG} q${CEND}. Exit
 "
     echo
     read -e -p "Please input the correct option: " Upgrade_flag
-    if [[ ! "${Upgrade_flag}" =~ ^[1-9,q]$|^10$ ]]; then
-      echo "${CWARNING}input error! Please only input 1~10 and q${CEND}"
+    if [[ ! "${Upgrade_flag}" =~ ^[1-9,q]$|^1[0-1]$ ]]; then
+      echo "${CWARNING}input error! Please only input 1~11 and q${CEND}"
     else
       case "${Upgrade_flag}" in
         1)
@@ -157,16 +164,29 @@ What Are You Doing?
           Upgrade_Redis
           ;;
         7)
-          Upgrade_Memcached
+          Upgrade_Valkey
           ;;
         8)
-          Upgrade_phpMyAdmin
+          Upgrade_Memcached
           ;;
         9)
-          Upgrade_OneinStack
+          Upgrade_phpMyAdmin
           ;;
         10)
-          [ -e ~/.acme.sh/acme.sh ] && { ~/.acme.sh/acme.sh --force --upgrade; ~/.acme.sh/acme.sh --version; }
+          Upgrade_OneinStack
+          ;;
+        11)
+          if [ -e ~/.acme.sh/acme.sh ]; then
+            ~/.acme.sh/acme.sh --force --upgrade; ~/.acme.sh/acme.sh --version;
+          elif [ -e /usr/local/acme.sh/acme.sh ]; then
+            /usr/local/acme.sh/acme.sh --force --upgrade; /usr/local/acme.sh/acme.sh --version;
+          elif [ -e /opt/acme.sh/acme.sh ]; then
+            /opt/acme.sh/acme.sh --force --upgrade; /opt/acme.sh/acme.sh --version;
+          elif command -v acme.sh >/dev/null 2>&1; then
+            acme.sh --force --upgrade; acme.sh --version;
+          else
+            echo "${CWARNING}acme.sh not found!${CEND}"
+          fi
           ;;
         q)
           exit
@@ -187,8 +207,22 @@ else
   [ "${db_flag}" == 'y' ] && Upgrade_DB
   [ "${php_flag}" == 'y' ] && Upgrade_PHP
   [ "${redis_flag}" == 'y' ] && Upgrade_Redis
+  [ "${valkey_flag}" == 'y' ] && Upgrade_Valkey
   [ "${memcached_flag}" == 'y' ] && Upgrade_Memcached
   [ "${phpmyadmin_flag}" == 'y' ] && Upgrade_phpMyAdmin
   [ "${NEW_oneinstack_ver}" == 'latest' ] && Upgrade_OneinStack
-  [ "${NEW_acme_ver}" == 'latest' ] && [ -e ~/.acme.sh/acme.sh ] && { ~/.acme.sh/acme.sh --force --upgrade; ~/.acme.sh/acme.sh --version; }
+  if [ "${NEW_acme_ver}" == 'latest' ]; then
+    if [ -e ~/.acme.sh/acme.sh ]; then
+      ~/.acme.sh/acme.sh --force --upgrade; ~/.acme.sh/acme.sh --version;
+    elif [ -e /usr/local/acme.sh/acme.sh ]; then
+      /usr/local/acme.sh/acme.sh --force --upgrade; /usr/local/acme.sh/acme.sh --version;
+    elif [ -e /opt/acme.sh/acme.sh ]; then
+      /opt/acme.sh/acme.sh --force --upgrade; /opt/acme.sh/acme.sh --version;
+    elif command -v acme.sh >/dev/null 2>&1; then
+      acme.sh --force --upgrade; acme.sh --version;
+    else
+      echo "${CWARNING}acme.sh not found!${CEND}"
+    fi
+  fi
 fi
+

@@ -34,7 +34,7 @@ Show_Help() {
   --help, -h                  Show this help message
   --quiet, -q                 quiet operation
   --list, -l                  List Virtualhost
-  --mphp_ver [53~81]          Use another PHP version (PATH: /usr/local/php${mphp_ver})
+  --mphp_ver [53~85]          Use another PHP version (PATH: /usr/local/php${mphp_ver})
   --proxy                     Use proxy
   --add                       Add Virtualhost
   --delete, --del             Delete Virtualhost
@@ -63,7 +63,7 @@ while :; do
       ;;
     --mphp_ver)
       mphp_ver=$2; mphp_flag=y; shift 2
-      [[ ! "${mphp_ver}" =~ ^5[3-6]$|^7[0-4]$|^8[0-1]$ ]] && { echo "${CWARNING}mphp_ver input error! Please only input number 53~81${CEND}"; unset mphp_ver mphp_flag; }
+      [[ ! "${mphp_ver}" =~ ^5[3-6]$|^7[0-4]$|^8[0-5]$ ]] && { echo "${CWARNING}mphp_ver input error! Please only input number 53~85${CEND}"; unset mphp_ver mphp_flag; }
       ;;
     --proxy)
       proxy_flag=y; shift 1
@@ -160,7 +160,7 @@ If you enter '.', the field will be left blank.
     read -e -p "Country Name (2 letter code) [CN]: " SELFSIGNEDSSL_C
     SELFSIGNEDSSL_C=${SELFSIGNEDSSL_C:-CN}
     # shellcheck disable=SC2104
-    [ ${#SELFSIGNEDSSL_C} != 2 ] && { echo "${CWARNING}input error, You must input 2 letter code country name${CEND}"; continue; }
+    [ ${#SELFSIGNEDSSL_C} != 2 ] && { echo "${CWARNING}input error, You must input 2 letter code country name${CEND}"; return 1; }
     echo
     read -e -p "State or Province Name (full name) [Shanghai]: " SELFSIGNEDSSL_ST
     SELFSIGNEDSSL_ST=${SELFSIGNEDSSL_ST:-Shanghai}
@@ -192,43 +192,101 @@ If you enter '.', the field will be left blank.
           echo "${CWARNING}input error!${CEND}"
         fi
       done
-    if [ ! -e ~/.acme.sh/ca/acme.zerossl.com/v2/DV90/account.key ]; then
-      while :; do echo
-        read -e -p "Please enter your email: " EMAIL
-        echo
-        if [[ "${EMAIL}" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+\.[A-Za-z]{2,9}$ ]]; then
-          break
-        else
-          echo "${CWARNING}input error!${CEND}"
-        fi
-      done
-      ~/.acme.sh/acme.sh --register-account -m ${EMAIL}
-    fi
+  if [ "${Domian_Mode}" == '3' -o "${dnsapi_flag}" == 'y' ] && [ ! -e ~/.acme.sh/acme.sh ]; then
+    pushd ${oneinstack_dir}/src > /dev/null
+    [ ! -e acme.sh-master.tar.gz ] && wget -qc ${mirror_link}/oneinstack/src/acme.sh-master.tar.gz
+    tar xzf acme.sh-master.tar.gz
+    pushd acme.sh-master > /dev/null
+    ./acme.sh --install > /dev/null 2>&1
+    popd > /dev/null
+    popd > /dev/null
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt > /dev/null 2>&1
+  fi
+  [ -e ~/.acme.sh/account.conf ] && sed -i '/^CERT_HOME=/d' ~/.acme.sh/account.conf
     if [ "${moredomain}" == "*.${domain}" -o "${dnsapi_flag}" == 'y' ]; then
       while :; do echo
-        echo 'Please select DNS provider:'
-        echo "${CMSG}dp${CEND},${CMSG}cx${CEND},${CMSG}ali${CEND},${CMSG}cf${CEND},${CMSG}aws${CEND},${CMSG}linode${CEND},${CMSG}he${CEND},${CMSG}namesilo${CEND},${CMSG}dgon${CEND},${CMSG}freedns${CEND},${CMSG}gd${CEND},${CMSG}namecom${CEND} and so on."
-        echo "${CMSG}More: https://oneinstack.com/faq/letsencrypt${CEND}"
-        read -e -p "Please enter your DNS provider: " DNS_PRO
-        if [ -e ~/.acme.sh/dnsapi/dns_${DNS_PRO}.sh ]; then
-          break
-        else
-          echo "${CWARNING}You DNS api mode is not supported${CEND}"
-        fi
+        echo "Please select your DNS Provider for DNS-01 API verification (Wildcard SSL):"
+        echo -e "\t${CMSG}1${CEND}. Cloudflare (API Token or Global Key)"
+        echo -e "\t${CMSG}2${CEND}. 阿里云 DNS / Alibaba Cloud DNS (Ali_Key & Ali_Secret)"
+        echo -e "\t${CMSG}3${CEND}. 腾讯云 / DNSPod (DP_Id & DP_Key)"
+        echo -e "\t${CMSG}4${CEND}. Other DNS provider (Manual provider name & parameters)"
+        read -e -p "Please enter your choice [1-4]: " DNS_CHOICE
+        case "${DNS_CHOICE}" in
+          1)
+            DNS_PRO="cf"
+            echo
+            echo "Cloudflare authentication method:"
+            echo -e "\t${CMSG}1${CEND}. API Token (Recommended with Zone:DNS:Edit permission)"
+            echo -e "\t${CMSG}2${CEND}. Global API Key + Account Email"
+            read -e -p "Please select [1-2] (default 1): " CF_AUTH_TYPE
+            CF_AUTH_TYPE=${CF_AUTH_TYPE:-1}
+            if [ "${CF_AUTH_TYPE}" == "2" ]; then
+              read -e -p "Please enter your Cloudflare Global API Key: " CF_Key
+              read -e -p "Please enter your Cloudflare Email: " CF_Email
+              export CF_Key="${CF_Key}"
+              export CF_Email="${CF_Email}"
+              [ -e ~/.acme.sh/account.conf ] && sed -i '/^SAVED_CF_Key=/d;/^SAVED_CF_Email=/d' ~/.acme.sh/account.conf
+              echo "SAVED_CF_Key='${CF_Key}'" >> ~/.acme.sh/account.conf
+              echo "SAVED_CF_Email='${CF_Email}'" >> ~/.acme.sh/account.conf
+            else
+              read -e -p "Please enter your Cloudflare API Token: " CF_Token
+              export CF_Token="${CF_Token}"
+              [ -e ~/.acme.sh/account.conf ] && sed -i '/^SAVED_CF_Token=/d' ~/.acme.sh/account.conf
+              echo "SAVED_CF_Token='${CF_Token}'" >> ~/.acme.sh/account.conf
+            fi
+            break
+            ;;
+          2)
+            DNS_PRO="ali"
+            echo
+            read -e -p "Please enter your Alibaba Cloud AccessKey ID (Ali_Key): " Ali_Key
+            read -e -p "Please enter your Alibaba Cloud AccessKey Secret (Ali_Secret): " Ali_Secret
+            export Ali_Key="${Ali_Key}"
+            export Ali_Secret="${Ali_Secret}"
+            [ -e ~/.acme.sh/account.conf ] && sed -i '/^SAVED_Ali_Key=/d;/^SAVED_Ali_Secret=/d' ~/.acme.sh/account.conf
+            echo "SAVED_Ali_Key='${Ali_Key}'" >> ~/.acme.sh/account.conf
+            echo "SAVED_Ali_Secret='${Ali_Secret}'" >> ~/.acme.sh/account.conf
+            break
+            ;;
+          3)
+            DNS_PRO="dp"
+            echo
+            read -e -p "Please enter your DNSPod / Tencent Cloud API ID (DP_Id): " DP_Id
+            read -e -p "Please enter your DNSPod / Tencent Cloud API Token / Key (DP_Key): " DP_Key
+            export DP_Id="${DP_Id}"
+            export DP_Key="${DP_Key}"
+            [ -e ~/.acme.sh/account.conf ] && sed -i '/^SAVED_DP_Id=/d;/^SAVED_DP_Key=/d' ~/.acme.sh/account.conf
+            echo "SAVED_DP_Id='${DP_Id}'" >> ~/.acme.sh/account.conf
+            echo "SAVED_DP_Key='${DP_Key}'" >> ~/.acme.sh/account.conf
+            break
+            ;;
+          4)
+            echo
+            echo 'Available DNS providers:'
+            echo "${CMSG}dp,cx,ali,cf,aws,linode,he,namesilo,dgon,freedns,gd,namecom${CEND} and so on."
+            echo "${CMSG}More: https://oneinstack.com/faq/letsencrypt${CEND}"
+            read -e -p "Please enter your DNS provider: " DNS_PRO
+            if [ ! -e ~/.acme.sh/dnsapi/dns_${DNS_PRO}.sh ]; then
+              echo "${CWARNING}Your DNS api mode is not supported${CEND}"
+              continue
+            fi
+            echo "Syntax: export Key1=Value1 ; export Key2=Value2"
+            read -e -p "Please enter your dnsapi parameters: " DNS_PAR
+            eval ${DNS_PAR}
+            break
+            ;;
+          *)
+            echo "${CWARNING}input error! Please input number 1~4${CEND}"
+            ;;
+        esac
       done
-      while :; do echo
-        echo "Syntax: export Key1=Value1 ; export Key2=Value1"
-        read -e -p "Please enter your dnsapi parameters: " DNS_PAR
-        echo
-        eval ${DNS_PAR}
-        if [ $? == 0 ]; then
-          break
-        else
-          echo "${CWARNING}Syntax error! PS: export Ali_Key=LTq ; export Ali_Secret=0q5E${CEND}"
-        fi
-      done
+
       [ "${moredomainame_flag}" == 'y' ] && moredomainame_D="$(for D in ${moredomainame}; do echo -d ${D}; done)"
-      ~/.acme.sh/acme.sh --force --issue -k ${CERT_KEYLENGTH} --dns dns_${DNS_PRO} -d ${domain} ${moredomainame_D}
+      if [ "${moredomain}" == "*.${domain}" ]; then
+        ~/.acme.sh/acme.sh --force --issue -k ${CERT_KEYLENGTH} --dns dns_${DNS_PRO} -d ${domain} -d "*.${domain}" ${moredomainame_D}
+      else
+        ~/.acme.sh/acme.sh --force --issue -k ${CERT_KEYLENGTH} --dns dns_${DNS_PRO} -d ${domain} ${moredomainame_D}
+      fi
     else
       if [ "${nginx_ssl_flag}" == 'y' ]; then
         [ ! -d ${web_install_dir}/conf/vhost ] && mkdir ${web_install_dir}/conf/vhost
@@ -238,6 +296,16 @@ If you enter '.', the field will be left blank.
           echo "server {  listen 80;  server_name ${domain}${moredomainame};  root ${vhostdir};  access_log off; }" > ${web_install_dir}/conf/vhost/${domain}.conf
         fi
         ${web_install_dir}/sbin/nginx -s reload
+      fi
+      if [ "${caddy_ssl_flag}" == 'y' ]; then
+        [ ! -d ${caddy_install_dir}/conf/vhost ] && mkdir -p ${caddy_install_dir}/conf/vhost
+        cat > ${caddy_install_dir}/conf/vhost/${domain}.conf << EOF
+${domain}${moredomainame} {
+  root * ${vhostdir}
+  file_server
+}
+EOF
+        Reload_Caddy
       fi
       if [ "${apache_ssl_flag}" == 'y' ]; then
         [ ! -d ${apache_install_dir}/conf/vhost ] && mkdir ${apache_install_dir}/conf/vhost
@@ -274,12 +342,15 @@ EOF
       [ -e "${PATH_SSL}/${domain}.crt" ] && rm -f ${PATH_SSL}/${domain}.{crt,key}
       Nginx_cmd="/bin/systemctl restart nginx"
       Apache_cmd="${apache_install_dir}/bin/apachectl -k graceful"
+      [ -e /usr/bin/systemctl ] && Caddy_cmd="systemctl reload caddy" || Caddy_cmd="service caddy reload"
       if [ -e "${web_install_dir}/sbin/nginx" -a -e "${apache_install_dir}/bin/httpd" ]; then
         Command="${Nginx_cmd};${Apache_cmd}"
       elif [ -e "${web_install_dir}/sbin/nginx" -a ! -e "${apache_install_dir}/bin/httpd" ]; then
         Command="${Nginx_cmd}"
       elif [ ! -e "${web_install_dir}/sbin/nginx" -a -e "${apache_install_dir}/bin/httpd" ]; then
         Command="${Apache_cmd}"
+      elif [ -e "${caddy_install_dir}/bin/caddy" ]; then
+        Command="${Caddy_cmd}"
       fi
     if [ -s ~/.acme.sh/${domain}/fullchain.cer ] && [[ "${CERT_KEYLENGTH}" =~ ^2048$|^3072$|^4096$|^8192$ ]]; then
       ~/.acme.sh/acme.sh --force --install-cert -d ${domain} --fullchain-file ${PATH_SSL}/${domain}.crt --key-file ${PATH_SSL}/${domain}.key --reloadcmd "${Command}" > /dev/null
@@ -289,6 +360,7 @@ EOF
       echo "${CFAILURE}Error: Create Let's Encrypt SSL Certificate failed! ${CEND}"
       [ -e "${web_install_dir}/conf/vhost/${domain}.conf" ] && rm -f ${web_install_dir}/conf/vhost/${domain}.conf
       [ -e "${apache_install_dir}/conf/vhost/${domain}.conf" ] && rm -f ${apache_install_dir}/conf/vhost/${domain}.conf
+      [ -e "${caddy_install_dir}/conf/vhost/${domain}.conf" ] && rm -f ${caddy_install_dir}/conf/vhost/${domain}.conf
       exit 1
     fi
   fi
@@ -337,7 +409,7 @@ What Are You Doing?
   fi
 
   #Multiple_PHP
-  if [ $(ls /dev/shm/php*-cgi.sock 2> /dev/null | wc -l) -ge 2 ]; then
+  if [ -e "${php_install_dir}/bin/php-config" ] && [ $(ls /dev/shm/php*-cgi.sock 2> /dev/shm/php_err | wc -l) -ge 2 ]; then
     if [ "${mphp_flag}" != 'y' ]; then
       PHP_detail_ver=`${php_install_dir}/bin/php-config --version`
       PHP_main_ver=${PHP_detail_ver%.*}
@@ -357,10 +429,12 @@ What Are You Doing?
         [ -e "/dev/shm/php81-cgi.sock" ] && echo -e "\t${CMSG}11${CEND}. PHP 8.1"
         [ -e "/dev/shm/php82-cgi.sock" ] && echo -e "\t${CMSG}12${CEND}. PHP 8.2"
         [ -e "/dev/shm/php83-cgi.sock" ] && echo -e "\t${CMSG}13${CEND}. PHP 8.3"
+        [ -e "/dev/shm/php84-cgi.sock" ] && echo -e "\t${CMSG}14${CEND}. PHP 8.4"
+        [ -e "/dev/shm/php85-cgi.sock" ] && echo -e "\t${CMSG}15${CEND}. PHP 8.5"
         read -e -p "Please input a number:(Default 0 press Enter) " php_option
         php_option=${php_option:-0}
-        if [[ ! ${php_option} =~ ^[0-9]$|^1[0-2]$ ]]; then
-          echo "${CWARNING}input error! Please only input number 1~12${CEND}"
+        if [[ ! ${php_option} =~ ^[0-9]$|^1[0-5]$ ]]; then
+          echo "${CWARNING}input error! Please only input number 0~15${CEND}"
         else
           break
         fi
@@ -379,6 +453,8 @@ What Are You Doing?
     [ "${php_option}" == '11' ] && mphp_ver=81
     [ "${php_option}" == '12' ] && mphp_ver=82
     [ "${php_option}" == '13' ] && mphp_ver=83
+    [ "${php_option}" == '14' ] && mphp_ver=84
+    [ "${php_option}" == '15' ] && mphp_ver=85
     [ ! -e "/dev/shm/php${mphp_ver}-cgi.sock" ] && unset mphp_ver
   fi
 
@@ -399,17 +475,22 @@ What Are You Doing?
     ./acme.sh --install > /dev/null 2>&1
     popd > /dev/null
     popd > /dev/null
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt > /dev/null 2>&1
   fi
   [ -e ~/.acme.sh/account.conf ] && sed -i '/^CERT_HOME=/d' ~/.acme.sh/account.conf
   if [[ "${Domian_Mode}" =~ ^[2-3]$ ]] || [ "${dnsapi_flag}" == 'y' ]; then
     if [ -e "${web_install_dir}/sbin/nginx" ]; then
       nginx_ssl_flag=y
       PATH_SSL=${web_install_dir}/conf/ssl
-      [ ! -d "${PATH_SSL}" ] && mkdir ${PATH_SSL}
-    elif [ ! -e "${web_install_dir}/sbin/nginx" -a -e "${apache_install_dir}/bin/httpd" ]; then
+      [ ! -d "${PATH_SSL}" ] && mkdir -p ${PATH_SSL}
+    elif [ -e "${caddy_install_dir}/bin/caddy" ]; then
+      caddy_ssl_flag=y
+      PATH_SSL=${caddy_install_dir}/conf/ssl
+      [ ! -d "${PATH_SSL}" ] && mkdir -p ${PATH_SSL}
+    elif [ -e "${apache_install_dir}/bin/httpd" ]; then
       apache_ssl_flag=y
       PATH_SSL=${apache_install_dir}/conf/ssl
-      [ ! -d "${PATH_SSL}" ] && mkdir ${PATH_SSL}
+      [ ! -d "${PATH_SSL}" ] && mkdir -p ${PATH_SSL}
     fi
   elif [ "${Domian_Mode}" == 'q' ]; then
     exit 1
@@ -424,10 +505,11 @@ What Are You Doing?
     fi
   done
 
-  if [ -e "${web_install_dir}/conf/vhost/${domain}.conf" -o -e "${apache_install_dir}/conf/vhost/${domain}.conf" -o -e "${tomcat_install_dir}/conf/vhost/${domain}.xml" ]; then
+  if [ -e "${web_install_dir}/conf/vhost/${domain}.conf" -o -e "${apache_install_dir}/conf/vhost/${domain}.conf" -o -e "${tomcat_install_dir}/conf/vhost/${domain}.xml" -o -e "${caddy_install_dir}/conf/vhost/${domain}.conf" ]; then
     [ -e "${web_install_dir}/conf/vhost/${domain}.conf" ] && echo -e "${domain} in the Nginx/Tengine/OpenResty already exist! \nYou can delete ${CMSG}${web_install_dir}/conf/vhost/${domain}.conf${CEND} and re-create"
     [ -e "${apache_install_dir}/conf/vhost/${domain}.conf" ] && echo -e "${domain} in the Apache already exist! \nYou can delete ${CMSG}${apache_install_dir}/conf/vhost/${domain}.conf${CEND} and re-create"
     [ -e "${tomcat_install_dir}/conf/vhost/${domain}.xml" ] && echo -e "${domain} in the Tomcat already exist! \nYou can delete ${CMSG}${tomcat_install_dir}/conf/vhost/${domain}.xml${CEND} and re-create"
+    [ -e "${caddy_install_dir}/conf/vhost/${domain}.conf" ] && echo -e "${domain} in the Caddy already exist! \nYou can delete ${CMSG}${caddy_install_dir}/conf/vhost/${domain}.conf${CEND} and re-create"
     exit
   else
     echo "domain=${domain}"
@@ -468,7 +550,7 @@ What Are You Doing?
       if [ -z "$(echo ${moredomain} | grep '.*\..*')" ]; then
         echo "${CWARNING}Your ${domain} is invalid! ${CEND}"
       else
-        [ "${moredomain}" == "${domain}" ] && echo "${CWARNING}Domain name already exists! ${CND}" && continue
+        [ "${moredomain}" == "${domain}" ] && echo "${CWARNING}Domain name already exists! ${CEND}" && continue
         echo domain list="$moredomain"
         moredomainame=" $moredomain"
         break
@@ -490,7 +572,7 @@ What Are You Doing?
     fi
   fi
 
-  if [ "${nginx_ssl_flag}" == 'y' ]; then
+  if [ "${nginx_ssl_flag}" == 'y' -o "${caddy_ssl_flag}" == 'y' -o "${apache_ssl_flag}" == 'y' ]; then
     while :; do echo
       read -e -p "Do you want to redirect all HTTP requests to HTTPS? [y/n]: " https_flag
       if [[ ! ${https_flag} =~ ^[y,n]$ ]]; then
@@ -500,23 +582,51 @@ What Are You Doing?
       fi
     done
 
-    if [[ "$(${web_install_dir}/sbin/nginx -V 2>&1 | grep -Eo 'with-http_v2_module')" = 'with-http_v2_module' ]]; then
-      LISTENOPT="443 ssl http2"
-    else
-      LISTENOPT="443 ssl spdy"
+    if [ "${nginx_ssl_flag}" == 'y' ]; then
+      if [[ "$(${web_install_dir}/sbin/nginx -V 2>&1 | grep -Eo 'with-http_v2_module')" = 'with-http_v2_module' ]]; then
+          # 获取nginx版本号
+          nginx_version=$(${web_install_dir}/sbin/nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          # 转换版本号为可比较的数字
+          version_number=$(echo $nginx_version | awk -F. '{ printf("%d%02d%02d\n", $1,$2,$3); }')
+          
+          if [ "$version_number" -lt 12501 ]; then
+            # nginx版本小于1.25.1
+            LISTENOPT="443 ssl http2"
+            HTTP2OPT=""
+          else
+            # nginx版本大于等于1.25.1
+            LISTENOPT="443 ssl"
+            HTTP2OPT="http2 on;"
+          fi
+      else
+        LISTENOPT="443 ssl spdy"
+        HTTP2OPT=""
+      fi
+
+      if [[ "$(${web_install_dir}/sbin/nginx -V 2>&1 | grep -Eo 'with-http_v3_module')" = 'with-http_v3_module' ]]; then
+        HTTP3OPT_V4="listen 443 quic;\n  "
+        HTTP3OPT_V6="listen [::]:443 quic;\n  "
+        HTTP3_HEADER="add_header Alt-Svc 'h3=\":443\"; ma=86400';\n  "
+      else
+        HTTP3OPT_V4=""
+        HTTP3OPT_V6=""
+        HTTP3_HEADER=""
+      fi
     fi
+
     Create_SSL
-    if [ -n "`ifconfig | grep inet6`" ]; then
-      Nginx_conf=$(echo -e "listen 80;\n  listen [::]:80;\n  listen ${LISTENOPT};\n  listen [::]:${LISTENOPT};\n  ssl_certificate ${PATH_SSL}/${domain}.crt;\n  ssl_certificate_key ${PATH_SSL}/${domain}.key;\n  ssl_protocols TLSv1.2 TLSv1.3;\n  ssl_ecdh_curve X25519:prime256v1:secp384r1:secp521r1;\n  ssl_ciphers ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256;\n  ssl_conf_command Ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256;\n  ssl_conf_command Options PrioritizeChaCha;\n  ssl_prefer_server_ciphers on;\n  ssl_session_timeout 10m;\n  ssl_session_cache shared:SSL:10m;\n  ssl_buffer_size 2k;\n  add_header Strict-Transport-Security max-age=15768000;\n  ssl_stapling on;\n  ssl_stapling_verify on;\n")
-    else
-      Nginx_conf=$(echo -e "listen 80;\n  listen ${LISTENOPT};\n  ssl_certificate ${PATH_SSL}/${domain}.crt;\n  ssl_certificate_key ${PATH_SSL}/${domain}.key;\n  ssl_protocols TLSv1.2 TLSv1.3;\n  ssl_ecdh_curve X25519:prime256v1:secp384r1:secp521r1;\n  ssl_ciphers ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256;\n  ssl_conf_command Ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256;\n  ssl_conf_command Options PrioritizeChaCha;\n  ssl_prefer_server_ciphers on;\n  ssl_session_timeout 10m;\n  ssl_session_cache shared:SSL:10m;\n  ssl_buffer_size 2k;\n  add_header Strict-Transport-Security max-age=15768000;\n  ssl_stapling on;\n  ssl_stapling_verify on;\n")
+    if [ "${nginx_ssl_flag}" == 'y' ]; then
+      if [ -n "`ifconfig | grep inet6`" ]; then
+        Nginx_conf=$(echo -e "listen 80;\n  listen [::]:80;\n  listen ${LISTENOPT};\n  listen [::]:${LISTENOPT};\n  ${HTTP3OPT_V4}${HTTP3OPT_V6}${HTTP2OPT}\n  ssl_certificate ${PATH_SSL}/${domain}.crt;\n  ssl_certificate_key ${PATH_SSL}/${domain}.key;\n  ssl_protocols TLSv1.2 TLSv1.3;\n  ssl_ecdh_curve X25519:prime256v1:secp384r1:secp521r1;\n  ssl_ciphers ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256;\n  ssl_conf_command Ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256;\n  ssl_conf_command Options PrioritizeChaCha;\n  ssl_prefer_server_ciphers on;\n  ssl_session_timeout 10m;\n  ssl_session_cache shared:SSL:10m;\n  ssl_buffer_size 2k;\n  add_header Strict-Transport-Security max-age=15768000;\n  ${HTTP3_HEADER}ssl_stapling on;\n  ssl_stapling_verify on;\n")
+      else
+        Nginx_conf=$(echo -e "listen 80;\n  listen ${LISTENOPT};\n  ${HTTP3OPT_V4}${HTTP2OPT}\n  ssl_certificate ${PATH_SSL}/${domain}.crt;\n  ssl_certificate_key ${PATH_SSL}/${domain}.key;\n  ssl_protocols TLSv1.2 TLSv1.3;\n  ssl_ecdh_curve X25519:prime256v1:secp384r1:secp521r1;\n  ssl_ciphers ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256;\n  ssl_conf_command Ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256;\n  ssl_conf_command Options PrioritizeChaCha;\n  ssl_prefer_server_ciphers on;\n  ssl_session_timeout 10m;\n  ssl_session_cache shared:SSL:10m;\n  ssl_buffer_size 2k;\n  add_header Strict-Transport-Security max-age=15768000;\n  ${HTTP3_HEADER}ssl_stapling on;\n  ssl_stapling_verify on;\n")
+      fi
     fi
-    Apache_SSL=$(echo -e "SSLEngine on\n  SSLCertificateFile \"${PATH_SSL}/${domain}.crt\"\n  SSLCertificateKeyFile \"${PATH_SSL}/${domain}.key\"")
-  elif [ "${apache_ssl_flag}" == 'y' ]; then
-    Create_SSL
-    Apache_SSL=$(echo -e "SSLEngine on\n  SSLCertificateFile \"${PATH_SSL}/${domain}.crt\"\n  SSLCertificateKeyFile \"${PATH_SSL}/${domain}.key\"")
-    [ -z "$(grep 'Listen 443' ${apache_install_dir}/conf/httpd.conf)" ] && sed -i "s@Listen 80@&\nListen 443@" ${apache_install_dir}/conf/httpd.conf
-    [ -z "$(grep 'ServerName 0.0.0.0:443' ${apache_install_dir}/conf/httpd.conf)" ] && sed -i "s@ServerName 0.0.0.0:80@&\nServerName 0.0.0.0:443@" ${apache_install_dir}/conf/httpd.conf
+    if [ "${apache_ssl_flag}" == 'y' ]; then
+      Apache_SSL=$(echo -e "SSLEngine on\n  SSLCertificateFile \"${PATH_SSL}/${domain}.crt\"\n  SSLCertificateKeyFile \"${PATH_SSL}/${domain}.key\"")
+      [ -z "$(grep 'Listen 443' ${apache_install_dir}/conf/httpd.conf)" ] && sed -i "s@Listen 80@&\nListen 443@" ${apache_install_dir}/conf/httpd.conf
+      [ -z "$(grep 'ServerName 0.0.0.0:443' ${apache_install_dir}/conf/httpd.conf)" ] && sed -i "s@ServerName 0.0.0.0:80@&\nServerName 0.0.0.0:443@" ${apache_install_dir}/conf/httpd.conf
+    fi
   else
     if [ -n "`ifconfig | grep inet6`" ]; then
       Nginx_conf=$(echo -e "listen 80;\n  listen [::]:80;")
@@ -603,6 +713,25 @@ Nginx_log() {
   else
     Nginx_log="access_log ${wwwlogs_dir}/${domain}_nginx.log combined;"
     echo "You access log file=${CMSG}${wwwlogs_dir}/${domain}_nginx.log${CEND}"
+  fi
+}
+
+Caddy_log() {
+  while :; do echo
+    read -e -p "Allow Caddy access_log? [y/n]: " access_flag
+    if [[ ! "${access_flag}" =~ ^[y,n]$ ]]; then
+      echo "${CWARNING}input error! Please only input 'y' or 'n'${CEND}"
+    else
+      break
+    fi
+  done
+  if [ "${access_flag}" == 'n' ]; then
+    Caddy_log=""
+  else
+    Caddy_log="log {
+        output file ${wwwlogs_dir}/${domain}_caddy.log
+    }"
+    echo "You access log file=${CMSG}${wwwlogs_dir}/${domain}_caddy.log${CEND}"
   fi
 }
 
@@ -840,19 +969,7 @@ server {
 }
 EOF
 
-  [ "${redirect_flag}" == 'y' ] && sed -i "s@^  root.*;@&\n  if (\$host != ${domain}) {  return 301 \$scheme://${domain}\$request_uri;  }@" ${web_install_dir}/conf/vhost/${domain}.conf
-
-  if [ "${anti_hotlinking_flag}" == 'y' ]; then
-      sed -i "s@^  root.*;@&\n  }@" ${web_install_dir}/conf/vhost/${domain}.conf
-      sed -i "s@^  root.*;@&\n    }@" ${web_install_dir}/conf/vhost/${domain}.conf
-      sed -i "s@^  root.*;@&\n      return 403;@" ${web_install_dir}/conf/vhost/${domain}.conf
-      sed -i "s@^  root.*;@&\n      rewrite ^/ http://www.linuxeye.com/403.html;@" ${web_install_dir}/conf/vhost/${domain}.conf
-      sed -i "s@^  root.*;@&\n    if (\$invalid_referer) {@" ${web_install_dir}/conf/vhost/${domain}.conf
-      sed -i "s@^  root.*;@&\n    valid_referers none blocked ${domain_allow_all};@" ${web_install_dir}/conf/vhost/${domain}.conf
-      sed -i "s@^  root.*;@&\n  location ~ .*\.(wma|wmv|asf|mp3|mmf|zip|rar|jpg|gif|png|swf|flv|mp4)\$ {@" ${web_install_dir}/conf/vhost/${domain}.conf
-    fi
-
-  [ "${https_flag}" == 'y' ] && sed -i "s@^  root.*;@&\n  if (\$ssl_protocol = \"\") { return 301 https://\$host\$request_uri; }@" ${web_install_dir}/conf/vhost/${domain}.conf
+  [ "${https_flag}" == 'y' ] && sed -i "s@^  server_name.*;@&\n  if (\$ssl_protocol = \"\") { return 301 https://\$host\$request_uri; }@" ${web_install_dir}/conf/vhost/${domain}.conf
 
   echo
   ${web_install_dir}/sbin/nginx -t
@@ -875,6 +992,131 @@ EOF
   echo "$(printf "%-30s" "Virtualhost conf:")${CMSG}${web_install_dir}/conf/vhost/${domain}.conf${CEND}"
   #echo "$(printf "%-30s" "Directory of:")${CMSG}${vhostdir}${CEND}"
   [ "${rewrite_flag}" == 'y' -a "${rewrite}" != 'magento2' -a "${rewrite}" != 'pathinfo' ] && echo "$(printf "%-30s" "Rewrite rule:")${CMSG}${web_install_dir}/conf/rewrite/${rewrite}.conf${CEND}"
+  Print_SSL
+}
+
+Reload_Caddy() {
+  if [ -e /usr/bin/systemctl ]; then
+    systemctl reload caddy
+  else
+    service caddy reload
+  fi
+}
+
+Create_caddy_php_conf() {
+  [ ! -d ${caddy_install_dir}/conf/vhost ] && mkdir -p ${caddy_install_dir}/conf/vhost
+  caddy_http_hosts="http://${domain}"
+  caddy_https_hosts="https://${domain}"
+  for D in ${moredomainame}; do
+    caddy_http_hosts="${caddy_http_hosts}, http://${D}"
+    caddy_https_hosts="${caddy_https_hosts}, https://${D}"
+  done
+  if [ "${https_flag}" == 'y' ]; then
+    cat > ${caddy_install_dir}/conf/vhost/${domain}.conf << EOF
+${caddy_http_hosts} {
+  redir https://{host}{uri}
+}
+
+${caddy_https_hosts} {
+  root * ${vhostdir}
+  php_fastcgi unix:/dev/shm/php${mphp_ver}-cgi.sock
+  file_server
+  ${Caddy_log}
+  tls ${PATH_SSL}/${domain}.crt ${PATH_SSL}/${domain}.key
+  handle_errors {
+    rewrite * /{err.status_code}.html
+    file_server
+  }
+}
+EOF
+  else
+    cat > ${caddy_install_dir}/conf/vhost/${domain}.conf << EOF
+${domain}${moredomainame} {
+  root * ${vhostdir}
+  php_fastcgi unix:/dev/shm/php${mphp_ver}-cgi.sock
+  file_server
+  ${Caddy_log}
+  $( [ -e "${PATH_SSL}/${domain}.crt" ] && echo "tls ${PATH_SSL}/${domain}.crt ${PATH_SSL}/${domain}.key" )
+  handle_errors {
+    rewrite * /{err.status_code}.html
+    file_server
+  }
+}
+EOF
+  fi
+
+  echo
+  ${caddy_install_dir}/bin/caddy validate --config ${caddy_install_dir}/conf/Caddyfile
+  if [ $? == 0 ]; then
+    echo "Reload Caddy......"
+    Reload_Caddy
+  else
+    rm -f ${caddy_install_dir}/conf/vhost/${domain}.conf
+    echo "Create virtualhost ... [${CFAILURE}FAILED${CEND}]"
+    exit 1
+  fi
+
+  printf "
+#######################################################################
+#       OneinStack for CentOS/RedHat 7+ Debian 9+ and Ubuntu 16+      #
+#       For more information please visit https://oneinstack.com      #
+#######################################################################
+"
+  echo "$(printf "%-30s" "Your domain:")${CMSG}${domain}${CEND}"
+  echo "$(printf "%-30s" "Caddy Virtualhost conf:")${CMSG}${caddy_install_dir}/conf/vhost/${domain}.conf${CEND}"
+  echo "$(printf "%-30s" "Directory of:")${CMSG}${vhostdir}${CEND}"
+  Print_SSL
+}
+
+Create_caddy_proxy_conf() {
+  [ ! -d ${caddy_install_dir}/conf/vhost ] && mkdir -p ${caddy_install_dir}/conf/vhost
+  caddy_http_hosts="http://${domain}"
+  caddy_https_hosts="https://${domain}"
+  for D in ${moredomainame}; do
+    caddy_http_hosts="${caddy_http_hosts}, http://${D}"
+    caddy_https_hosts="${caddy_https_hosts}, https://${D}"
+  done
+  if [ "${https_flag}" == 'y' ]; then
+    cat > ${caddy_install_dir}/conf/vhost/${domain}.conf << EOF
+${caddy_http_hosts} {
+  redir https://{host}{uri}
+}
+
+${caddy_https_hosts} {
+  reverse_proxy ${Proxy_Pass}
+  ${Caddy_log}
+  tls ${PATH_SSL}/${domain}.crt ${PATH_SSL}/${domain}.key
+}
+EOF
+  else
+    cat > ${caddy_install_dir}/conf/vhost/${domain}.conf << EOF
+${domain}${moredomainame} {
+  reverse_proxy ${Proxy_Pass}
+  ${Caddy_log}
+  $( [ -e "${PATH_SSL}/${domain}.crt" ] && echo "tls ${PATH_SSL}/${domain}.crt ${PATH_SSL}/${domain}.key" )
+}
+EOF
+  fi
+
+  echo
+  ${caddy_install_dir}/bin/caddy validate --config ${caddy_install_dir}/conf/Caddyfile
+  if [ $? == 0 ]; then
+    echo "Reload Caddy......"
+    Reload_Caddy
+  else
+    rm -f ${caddy_install_dir}/conf/vhost/${domain}.conf
+    echo "Create virtualhost ... [${CFAILURE}FAILED${CEND}]"
+    exit 1
+  fi
+
+  printf "
+#######################################################################
+#       OneinStack for CentOS/RedHat 7+ Debian 9+ and Ubuntu 16+      #
+#       For more information please visit https://oneinstack.com      #
+#######################################################################
+"
+  echo "$(printf "%-30s" "Your domain:")${CMSG}${domain}${CEND}"
+  echo "$(printf "%-30s" "Caddy Virtualhost conf:")${CMSG}${caddy_install_dir}/conf/vhost/${domain}.conf${CEND}"
   Print_SSL
 }
 
@@ -1073,7 +1315,18 @@ EOF
 }
 
 Add_Vhost() {
-  if [ -e "${web_install_dir}/sbin/nginx" -a ! -e "${apache_install_dir}/bin/httpd" ]; then
+  if [ -e "${caddy_install_dir}/bin/caddy" ] && [[ "${web_install_dir}" =~ caddy || ! -e "${web_install_dir}/sbin/nginx" ]]; then
+    Choose_ENV
+    Input_Add_domain
+    if [ "${proxy_flag}" == "y" ]; then
+      Input_Add_proxy
+      Caddy_log
+      Create_caddy_proxy_conf
+    else
+      Caddy_log
+      Create_caddy_php_conf
+    fi
+  elif [ -e "${web_install_dir}/sbin/nginx" -a ! -e "${apache_install_dir}/bin/httpd" ]; then
     Choose_ENV
     Input_Add_domain
     Nginx_anti_hotlinking
@@ -1111,6 +1364,17 @@ Add_Vhost() {
       Nginx_log
       Apache_log
       Create_nginx_apache_modphp_conf
+    fi
+  elif [ -e "${caddy_install_dir}/bin/caddy" ]; then
+    Choose_ENV
+    Input_Add_domain
+    if [ "${proxy_flag}" == "y" ]; then
+      Input_Add_proxy
+      Caddy_log
+      Create_caddy_proxy_conf
+    else
+      Caddy_log
+      Create_caddy_php_conf
     fi
   else
     echo "Error! ${CFAILURE}Web server${CEND} not found!"
@@ -1162,6 +1426,55 @@ Del_NGX_Vhost() {
         done
     else
       echo "${CWARNING}Virtualhost was not exist! ${CEND}"
+    fi
+  fi
+}
+
+Del_Caddy_Vhost() {
+  if [ -e "${caddy_install_dir}/bin/caddy" ]; then
+    [ -d "${caddy_install_dir}/conf/vhost" ] && Domain_List=$(ls ${caddy_install_dir}/conf/vhost | sed "s@.conf@@g")
+    if [ -n "${Domain_List}" ]; then
+      echo
+      echo "Virtualhost list:"
+      echo ${CMSG}${Domain_List}${CEND}
+      while :; do echo
+        read -e -p "Please input a domain you want to delete: " domain
+        if [ -z "$(echo ${domain} | grep '.*\..*')" ]; then
+          echo "${CWARNING}Your ${domain} is invalid! ${CEND}"
+        else
+          if [ -e "${caddy_install_dir}/conf/vhost/${domain}.conf" ]; then
+            Directory=$(grep 'root \*' ${caddy_install_dir}/conf/vhost/${domain}.conf | head -1 | sed 's@^.*root \* @@g')
+            rm -f ${caddy_install_dir}/conf/vhost/${domain}.conf
+            Reload_Caddy
+            if [ -n "${Directory}" -a -d "${Directory}" ]; then
+              while :; do echo
+                read -e -p "Do you want to delete Virtul Host directory? [y/n]: " Del_Vhost_wwwroot_flag
+                if [[ ! ${Del_Vhost_wwwroot_flag} =~ ^[y,n]$ ]]; then
+                  echo "${CWARNING}input error! Please only input 'y' or 'n'${CEND}"
+                else
+                  break
+                fi
+              done
+
+              if [ "${Del_Vhost_wwwroot_flag}" == 'y' ]; then
+                if [ "${quiet_flag}" != 'y' ]; then
+                  echo "Press Ctrl+c to cancel or Press any key to continue..."
+                  char=$(get_char)
+                fi
+                rm -rf ${Directory}
+              fi
+            fi
+            echo
+            [ -d ~/.acme.sh/${domain} ] && ~/.acme.sh/acme.sh --force --remove -d ${domain} > /dev/null 2>&1
+            [ -d ~/.acme.sh/${domain}_ecc ] && ~/.acme.sh/acme.sh --force --remove --ecc -d ${domain} > /dev/null 2>&1
+            echo "${CSUCCESS}Domain: ${domain} has been deleted.${CEND}"
+            echo
+          else
+            echo "${CWARNING}Virtualhost: ${domain} was not exist! ${CEND}"
+          fi
+          break
+        fi
+      done
     fi
   fi
 }
@@ -1240,6 +1553,7 @@ Del_Tomcat_Vhost() {
             echo "${CWARNING}Your ${domain} is invalid! ${CEND}"
           else
             if [ -n "$(grep vhost-${domain} ${tomcat_install_dir}/conf/server.xml)" ]; then
+              Directory=$(grep -oE 'docBase="[^"]+"' ${tomcat_install_dir}/conf/vhost/${domain}.xml 2>/dev/null | head -1 | awk -F'"' '{print $2}')
               sed -i /vhost-${domain}/d ${tomcat_install_dir}/conf/server.xml
               rm -f ${tomcat_install_dir}/conf/vhost/${domain}.xml
               service tomcat restart
@@ -1257,7 +1571,7 @@ Del_Tomcat_Vhost() {
                   echo "Press Ctrl+c to cancel or Press any key to continue..."
                   char=$(get_char)
 		fi
-                rm -rf ${Directory}
+                [ -n "${Directory}" ] && rm -rf ${Directory}
               fi
               echo "${CSUCCESS}Domain: ${domain} has been deleted.${CEND}"
             else
@@ -1275,9 +1589,13 @@ Del_Tomcat_Vhost() {
 }
 
 List_Vhost() {
-  [ -e "${tomcat_install_dir}/conf/server.xml" -a ! -d "${web_install_dir}/sbin/nginx" ] && Domain_List=$(ls ${tomcat_install_dir}/conf/vhost | grep -v 'localhost.xml' | sed "s@.xml@@g")
-  [ -d "${web_install_dir}/conf/vhost" ] && Domain_List=$(ls ${web_install_dir}/conf/vhost | sed "s@.conf@@g")
-  [ -e "${apache_install_dir}/bin/httpd" -a ! -d "${web_install_dir}/conf/vhost" ] && Domain_List=$(ls ${apache_install_dir}/conf/vhost | grep -v '0.conf' | sed "s@.conf@@g")
+  Domain_List_Nginx=$( [ -d "${web_install_dir}/conf/vhost" ] && ls ${web_install_dir}/conf/vhost | sed "s@.conf@@g" )
+  Domain_List_Caddy=$( [ -d "${caddy_install_dir}/conf/vhost" ] && ls ${caddy_install_dir}/conf/vhost | sed "s@.conf@@g" )
+  Domain_List_Apache=$( [ -e "${apache_install_dir}/bin/httpd" ] && ls ${apache_install_dir}/conf/vhost | grep -v '0.conf' | sed "s@.conf@@g" )
+  Domain_List_Tomcat=$( [ -e "${tomcat_install_dir}/conf/server.xml" ] && ls ${tomcat_install_dir}/conf/vhost | grep -v 'localhost.xml' | sed "s@.xml@@g" )
+  
+  Domain_List=$(echo "${Domain_List_Nginx} ${Domain_List_Caddy} ${Domain_List_Apache} ${Domain_List_Tomcat}" | tr ' ' '\n' | sort | uniq | xargs)
+  
   if [ -n "${Domain_List}" ]; then
     echo
     echo "Virtualhost list:"
@@ -1293,5 +1611,5 @@ if [ ${ARG_NUM} == 0 ]; then
 else
   [ "${add_flag}" == 'y' -o "${proxy_flag}" == 'y' -o "${sslquiet_flag}" == 'y' ] && Add_Vhost
   [ "${list_flag}" == 'y' ] && List_Vhost
-  [ "${delete_flag}" == 'y' ] && { Del_NGX_Vhost; Del_Apache_Vhost; Del_Tomcat_Vhost; }
+  [ "${delete_flag}" == 'y' ] && { Del_NGX_Vhost; Del_Apache_Vhost; Del_Tomcat_Vhost; Del_Caddy_Vhost; }
 fi

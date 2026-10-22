@@ -23,7 +23,7 @@ Install_PHP55() {
     tar xzf curl-${curl_ver}.tar.gz
     pushd curl-${curl_ver} > /dev/null
     [ -e "/usr/local/lib/libnghttp2.so" ] && with_nghttp2='--with-nghttp2=/usr/local'
-    ./configure --prefix=${curl_install_dir} ${php5_with_ssl} ${with_nghttp2}
+    ./configure --prefix=${curl_install_dir} ${php5_with_ssl} ${with_nghttp2} --without-libpsl
     make -j ${THREAD} && make install
     popd > /dev/null
     rm -rf curl-${curl_ver}
@@ -43,11 +43,13 @@ Install_PHP55() {
   if [ ! -e "/usr/local/bin/libmcrypt-config" -a ! -e "/usr/bin/libmcrypt-config" ]; then
     tar xzf libmcrypt-${libmcrypt_ver}.tar.gz
     pushd libmcrypt-${libmcrypt_ver} > /dev/null
-    ./configure
+    /bin/cp /usr/share/misc/config.guess /usr/share/misc/config.sub . 2>/dev/null
+    /bin/cp /usr/share/misc/config.guess /usr/share/misc/config.sub libltdl/ 2>/dev/null
+    CFLAGS="-O2 ${compat_cflags_c89}" ./configure
     make -j ${THREAD} && make install
     ldconfig
     pushd libltdl > /dev/null
-    ./configure --enable-ltdl-install
+    CFLAGS="-O2 ${compat_cflags_c89}" ./configure --enable-ltdl-install
     make -j ${THREAD} && make install
     popd > /dev/null
     popd > /dev/null
@@ -57,7 +59,8 @@ Install_PHP55() {
   if [ ! -e "/usr/local/include/mhash.h" -a ! -e "/usr/include/mhash.h" ]; then
     tar xzf mhash-${mhash_ver}.tar.gz
     pushd mhash-${mhash_ver} > /dev/null
-    ./configure
+    /bin/cp /usr/share/misc/config.guess /usr/share/misc/config.sub . 2>/dev/null
+    CFLAGS="-O2 ${compat_cflags}" ./configure
     make -j ${THREAD} && make install
     popd > /dev/null
     rm -rf mhash-${mhash_ver}
@@ -76,7 +79,8 @@ Install_PHP55() {
     tar xzf mcrypt-${mcrypt_ver}.tar.gz
     pushd mcrypt-${mcrypt_ver} > /dev/null
     ldconfig
-    ./configure
+    /bin/cp /usr/share/misc/config.guess /usr/share/misc/config.sub . 2>/dev/null
+    CFLAGS="-O2 ${compat_cflags_c89}" ./configure
     make -j ${THREAD} && make install
     popd > /dev/null
     rm -rf mcrypt-${mcrypt_ver}
@@ -89,6 +93,27 @@ Install_PHP55() {
   tar xzf php-${php55_ver}.tar.gz
   patch -d php-${php55_ver} -p0 < fpm-race-condition.patch
   pushd php-${php55_ver} > /dev/null
+  [ -e ext/libxml/libxml.c ] && sed -i 's/ATTRIBUTE_UNUSED/__attribute__((unused))/g' ext/libxml/libxml.c
+  if [ -e ext/openssl/php_openssl.h ] && ! grep -q '^#ifndef ERR_NUM_ERRORS' ext/openssl/php_openssl.h; then
+    sed -i '/struct php_openssl_errors {/i #ifndef ERR_NUM_ERRORS\n#define ERR_NUM_ERRORS 16\n#endif' ext/openssl/php_openssl.h
+  fi
+  # ASN1_STRING_get0_data() only exists in OpenSSL 1.1.0+; map it for OpenSSL 1.0.x (e.g. CentOS 7 system OpenSSL 1.0.2).
+  # PHP 7.x openssl.c already ships its own static fallback, so only patch files that lack one.
+  for f in ext/openssl/xp_ssl.c ext/openssl/openssl.c; do
+    if [ -e "${f}" ] && ! grep -q 'ASN1_STRING_get0_data(const ASN1_STRING' ${f} && ! grep -q 'define ASN1_STRING_get0_data' ${f}; then
+      sed -i '1i #include <openssl/opensslv.h>\n#if OPENSSL_VERSION_NUMBER < 0x10100000L && !defined(LIBRESSL_VERSION_NUMBER)\n#define ASN1_STRING_get0_data ASN1_STRING_data\n#endif' ${f}
+    fi
+  done
+  if [ -e ext/openssl/xp_ssl.c ]; then
+    sed -i 's/san->d.iPAddress->length/ASN1_STRING_length(san->d.iPAddress)/g' ext/openssl/xp_ssl.c
+    sed -i 's/san->d.iPAddress->data/ASN1_STRING_get0_data(san->d.iPAddress)/g' ext/openssl/xp_ssl.c
+  fi
+  if [ -e ext/openssl/openssl.c ]; then
+    sed -i 's/(char \*)str->data, str->length/(char *)ASN1_STRING_get0_data(str), ASN1_STRING_length(str)/g' ext/openssl/openssl.c
+    sed -i 's/timestr->data/ASN1_STRING_get0_data(timestr)/g' ext/openssl/openssl.c
+    sed -i 's/extension_data->data/ASN1_STRING_get0_data(extension_data)/g' ext/openssl/openssl.c
+    sed -i 's/extension_data->length/ASN1_STRING_length(extension_data)/g' ext/openssl/openssl.c
+  fi
   [ ! -d "${php_install_dir}" ] && mkdir -p ${php_install_dir}
   { [ ${RHEL_ver} -ge 9 >/dev/null 2>&1 ] || [ ${Debian_ver} -ge 10 >/dev/null 2>&1 ] || [ ${Ubuntu_ver} -ge 19 >/dev/null 2>&1 ]; } || intl_modules_options='--enable-intl'
   [ "${phpcache_option}" == '1' ] && phpcache_arg='--enable-opcache' || phpcache_arg='--disable-opcache'
@@ -115,7 +140,7 @@ Install_PHP55() {
     --with-mhash --enable-pcntl --enable-sockets --with-xmlrpc --enable-ftp --with-xsl ${intl_modules_options} \
     --with-gettext --enable-zip --enable-soap --disable-debug ${php_modules_options}
   fi
-  make ZEND_EXTRA_LIBS='-liconv' -j ${THREAD}
+  make EXTRA_CFLAGS="${compat_cflags}" ZEND_EXTRA_LIBS='-liconv' -j ${THREAD}
   make install
 
   if [ -e "${php_install_dir}/bin/phpize" ]; then
@@ -252,10 +277,10 @@ EOF
       sed -i "s@^pm.max_spare_servers.*@pm.max_spare_servers = 80@" ${php_install_dir}/etc/php-fpm.conf
     fi
 
-    systemctl start php-fpm
+    systemctl start php-fpm 2>/dev/null || ${php_install_dir}/sbin/php-fpm
 
   elif [ "${apache_mode_option}" == '2' ]; then
-    systemctl restart httpd
+    systemctl restart httpd 2>/dev/null || ${apache_install_dir}/bin/apachectl -k restart
   fi
   popd > /dev/null
   [ -e "${php_install_dir}/bin/phpize" ] && rm -rf php-${php55_ver}
